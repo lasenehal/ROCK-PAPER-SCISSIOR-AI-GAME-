@@ -1,0 +1,695 @@
+from flask import Flask, request, jsonify, render_template_string
+import random
+
+app = Flask(__name__)
+
+# ---------------------------------------------------------
+# BACKEND ENGINE STATE & LOGIC
+# ---------------------------------------------------------
+
+# Global memory model structure mapping tracking parameters across match instances
+history_matrix = {
+    "win": {"rock": 0, "paper": 0, "scissors": 0},
+    "loss": {"rock": 0, "paper": 0, "scissors": 0},
+    "tie": {"rock": 0, "paper": 0, "scissors": 0}
+}
+
+moves = ["rock", "paper", "scissors"]
+counters = {"rock": "paper", "paper": "scissors", "scissors": "rock"}
+
+@app.route('/api/predict', methods=['POST'])
+def predict_move():
+    global history_matrix
+    data = request.get_json() or {}
+    
+    human_move = data.get("humanMove")
+    prev_outcome = data.get("prevOutcome")
+    
+    # Update internal state history from the immediately completed baseline validation cycle
+    if prev_outcome and human_move in moves:
+        history_matrix[prev_outcome][human_move] += 1
+
+    ai_move = "rock"
+    bfs_telemetry = "H(n) Uniform -> Random Pick"
+    
+    # Process behavior algorithm chains if historical baseline records exist
+    if prev_outcome and prev_outcome in history_matrix:
+        predictions = history_matrix[prev_outcome]
+        total_predictions = sum(predictions.values())
+        
+        if total_predictions > 0:
+            # Pick highest recurring historical value node for tracking estimation path layouts
+            predicted_human_move = max(predictions, key=predictions.get)
+            
+            if predictions[predicted_human_move] == 0:
+                ai_move = random.choice(moves)
+                bfs_telemetry = "H(n) Uniform -> Random Pick"
+            else:
+                ai_move = counters[predicted_human_move]
+                bfs_telemetry = f"H(n) Highest -> Expect: {predicted_human_move.capitalize()}"
+        else:
+            ai_move = random.choice(moves)
+    else:
+        ai_move = random.choice(moves)
+
+    return jsonify({
+        "aiMove": ai_move,
+        "telemetry": {
+            "bfs": bfs_telemetry
+        }
+    })
+
+@app.route('/api/reset', methods=['POST'])
+def reset_history():
+    global history_matrix
+    history_matrix = {
+        "win": {"rock": 0, "paper": 0, "scissors": 0},
+        "loss": {"rock": 0, "paper": 0, "scissors": 0},
+        "tie": {"rock": 0, "paper": 0, "scissors": 0}
+    }
+    return jsonify({"status": "History matrix flushed successfully"})
+
+
+# ---------------------------------------------------------
+# FRONTEND INTERFACE UI (HTML/CSS/JS)
+# ---------------------------------------------------------
+
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Human vs Mind-Reader AI: Best of 5</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: radial-gradient(circle, #1a1a2e 0%, #0f0f1a 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+            overflow-y: auto;
+        }
+        
+        .game-container {
+            background: rgba(25, 25, 35, 0.85);
+            padding: 35px 40px;
+            border-radius: 16px;
+            border: 1px solid #00f2fe;
+            box-shadow: 0 0 20px rgba(0, 242, 254, 0.2), inset 0 0 15px rgba(0, 242, 254, 0.1);
+            text-align: center;
+            max-width: 480px;
+            width: 100%;
+            backdrop-filter: blur(10px);
+            position: relative;
+        }
+        
+        h1 { 
+            color: #fff; 
+            margin: 0 0 5px 0; 
+            font-size: 28px;
+            letter-spacing: 1px;
+            text-shadow: 0 0 10px #00f2fe, 0 0 20px #00f2fe;
+        }
+        
+        .subtitle { 
+            color: #8fa0dd; 
+            font-size: 14px; 
+            margin: 0 0 15px 0; 
+        }
+
+        .match-mode {
+            color: #00f2fe;
+            font-size: 12px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+
+        #round-tracker {
+            color: #ffea00;
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            text-shadow: 0 0 5px rgba(255, 234, 0, 0.3);
+        }
+
+        .timer-container {
+            font-size: 11px;
+            color: #ffb300;
+            margin-bottom: 15px;
+            letter-spacing: 1px;
+        }
+        #timer {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ffea00;
+            text-shadow: 0 0 10px #ffea00;
+            display: block;
+            margin-top: 5px;
+        }
+
+        .control-panel {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .ctrl-btn {
+            font-size: 11px;
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: 1px solid rgba(0, 242, 254, 0.4);
+            background: rgba(0, 0, 0, 0.4);
+            color: #00f2fe;
+            cursor: pointer;
+            font-weight: bold;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            transition: all 0.2s ease;
+        }
+
+        .ctrl-btn:hover:not(:disabled) {
+            background: #00f2fe;
+            color: #1a1a2e;
+            box-shadow: 0 0 10px rgba(0, 242, 254, 0.5);
+        }
+
+        #btn-pause.paused {
+            background: #ffea00;
+            color: #1a1a2e;
+            border-color: #ffea00;
+            box-shadow: 0 0 10px rgba(255, 234, 0, 0.5);
+        }
+        
+        .buttons-container {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 25px;
+        }
+        
+        button.game-btn {
+            font-size: 15px;
+            font-weight: bold;
+            padding: 14px 20px;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #0072ff 0%, #00f2fe 100%);
+            color: white;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 242, 254, 0.3);
+            transition: transform 0.1s ease, box-shadow 0.2s ease;
+        }
+        
+        button.game-btn:hover:not(:disabled) {
+            box-shadow: 0 0 20px #00f2fe, 0 0 5px #0072ff;
+            transform: translateY(-3px);
+        }
+
+        button:disabled {
+            background: #333 !important;
+            color: #666 !important;
+            box-shadow: none !important;
+            border-color: #444 !important;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        .display-area {
+            margin: 20px 0;
+            min-height: 85px;
+        }
+        
+        #choices { 
+            color: #b4c6ef; 
+            font-size: 15px; 
+            margin-bottom: 12px; 
+            letter-spacing: 0.5px;
+        }
+        
+        #result { 
+            color: #4facfe; 
+            font-size: 22px; 
+            font-weight: bold; 
+            text-shadow: 0 0 10px rgba(79, 172, 254, 0.6);
+        }
+
+        .telemetry-panel {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(0, 242, 254, 0.15);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .telemetry-title {
+            color: #8fa0dd;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 10px;
+            border-bottom: 1px solid rgba(143, 160, 221, 0.2);
+            padding-bottom: 4px;
+        }
+
+        .algo-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 15px;
+            font-size: 12px;
+        }
+
+        .algo-item {
+            color: #b4c6ef;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .algo-name {
+            font-weight: 600;
+            color: #00f2fe;
+        }
+
+        .algo-status {
+            color: #a2a2a2;
+            font-family: monospace;
+            font-size: 11px;
+            margin-top: 2px;
+        }
+        
+        hr { 
+            border: 0; 
+            border-top: 1px solid rgba(0, 242, 254, 0.2); 
+            margin: 20px 0; 
+        }
+        
+        .scoreboard {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            font-weight: bold;
+            color: #00f2fe;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 12px 20px;
+            border-radius: 8px;
+            border: 1px solid rgba(0, 242, 254, 0.1);
+        }
+
+        .score-box span {
+            color: #fff;
+            display: block;
+            font-size: 18px;
+            margin-top: 5px;
+            text-shadow: 0 0 5px #fff;
+        }
+
+        .overlay {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 26, 0.95);
+            border-radius: 16px;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+
+        #overlay-title {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        #overlay-msg {
+            color: #b4c6ef;
+            margin-bottom: 30px;
+            font-size: 16px;
+        }
+
+        .btn-reset {
+            background: linear-gradient(135deg, #ff0055 0%, #ff5500 100%);
+            box-shadow: 0 4px 15px rgba(255, 0, 85, 0.4);
+            font-size: 16px;
+            font-weight: bold;
+            padding: 15px 22px;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+        }
+        .btn-reset:hover {
+            box-shadow: 0 0 20px #ff0055;
+        }
+    </style>
+</head>
+<body>
+
+<div class="game-container">
+    <div id="end-screen" class="overlay">
+        <div id="overlay-title">MATCH OVER</div>
+        <div id="overlay-msg">AI won the match!</div>
+        <button class="btn-reset" onclick="resetMatch()">PLAY AGAIN</button>
+    </div>
+
+    <h1>CYBERMIND AI</h1>
+    <p class="subtitle">Neural network is analyzing your habits.</p>
+    <div class="match-mode">🏆 Best of 5 Series 🏆</div>
+    <div id="round-tracker">ROUND: 1 / 5</div>
+    
+    <div class="timer-container">
+        TIME REMAINING
+        <span id="timer">10s</span>
+    </div>
+
+    <div class="control-panel">
+        <button id="btn-pause" class="ctrl-btn" onclick="togglePause()">⏸️ Pause</button>
+        <button id="btn-restart" class="ctrl-btn" onclick="resetMatch()">🔄 Restart</button>
+    </div>
+
+    <div class="buttons-container">
+        <button class="game-btn" onclick="playRound('rock')">🪨 Rock</button>
+        <button class="game-btn" onclick="playRound('paper')">📄 Paper</button>
+        <button class="game-btn" onclick="playRound('scissors')">✂️ Scissors</button>
+    </div>
+    
+    <div class="display-area">
+        <div id="choices">SYSTEM INITIALIZED: Make your choice!</div>
+        <div id="result"></div>
+    </div>
+
+    <div class="telemetry-panel">
+        <div class="telemetry-title">⚡ Neural Core Diagnostics</div>
+        <div class="algo-grid">
+            <div class="algo-item">
+                <span class="algo-name">A* Search</span>
+                <span id="status-astar" class="algo-status">f(n) = g(n) + h(n)...</span>
+            </div>
+            <div class="algo-item">
+                <span class="algo-name">Minimax Engine</span>
+                <span id="status-minimax" class="algo-status">Evaluating Depth 0...</span>
+            </div>
+            <div class="algo-item">
+                <span class="algo-name">Best-First Search</span>
+                <span id="status-bfs" class="algo-status">Heuristic open...</span>
+            </div>
+            <div class="algo-item">
+                <span class="algo-name">Chaining Logic</span>
+                <span id="status-chaining" class="algo-status">Fact parsing idle...</span>
+            </div>
+        </div>
+    </div>
+    
+    <hr>
+    
+    <div class="scoreboard">
+        <div class="score-box">PLAYER <span id="score-human">0</span></div>
+        <div class="score-box">AI OVERLORD <span id="score-ai">0</span></div>
+        <div class="score-box">TIES <span id="score-ties">0</span></div>
+    </div>
+</div>
+
+<script>
+    let scores = { human: 0, ai: 0, ties: 0 };
+    let prevOutcome = null;
+    let timeLeft = 10;
+    let timerInterval = null;
+    let isGameOver = false;
+    let isPaused = false; 
+    let roundsPlayed = 0;
+
+    startTimer();
+    updateTelemetryDefaults();
+
+    function startTimer() {
+        if(isGameOver || isPaused) return; 
+        clearInterval(timerInterval);
+        timeLeft = 10;
+        document.getElementById("timer").innerText = timeLeft + "s";
+        document.getElementById("timer").style.color = "#ffea00";
+        document.getElementById("timer").style.textShadow = "0 0 10px #ffea00";
+
+        timerInterval = setInterval(() => {
+            if (isPaused) return; 
+
+            timeLeft--;
+            document.getElementById("timer").innerText = timeLeft + "s";
+
+            if(!isPaused && !isGameOver) {
+                document.getElementById("status-astar").innerText = "f(n) = " + (10 - timeLeft) + " + " + timeLeft + " (Optimal)";
+            }
+
+            if (timeLeft <= 3) {
+                document.getElementById("timer").style.color = "#ff0055";
+                document.getElementById("timer").style.textShadow = "0 0 10px #ff0055";
+            }
+
+            if (timeLeft <= 0) {
+                clearInterval(timerInterval);
+                handleTimeout();
+            }
+        }, 1000);
+    }
+
+    function togglePause() {
+        if (isGameOver) return;
+        const pauseBtn = document.getElementById("btn-pause");
+        const gameButtons = document.getElementsByClassName("game-btn");
+
+        if (!isPaused) {
+            isPaused = true;
+            clearInterval(timerInterval);
+            pauseBtn.innerText = "▶️ Resume";
+            pauseBtn.classList.add("paused");
+            
+            for(let btn of gameButtons) { btn.disabled = true; }
+            document.getElementById("choices").innerHTML = '<span style="color:#ffea00">GAME PAUSED</span>';
+            
+            document.getElementById("status-minimax").innerText = "Pruning suspended";
+            document.getElementById("status-bfs").innerText = "Priority Queue frozen";
+            document.getElementById("status-chaining").innerText = "Inference on hold";
+        } else {
+            isPaused = false;
+            pauseBtn.innerText = "⏸️ Pause";
+            pauseBtn.classList.remove("paused");
+            
+            for(let btn of gameButtons) { btn.disabled = false; }
+            document.getElementById("choices").innerText = "Awaiting your move...";
+            startTimer();
+        }
+    }
+
+    function handleTimeout() {
+        scores.ai++;
+        roundsPlayed++; 
+        prevOutcome = "loss";
+        
+        document.getElementById("choices").innerHTML = '<span style="color:#ff0055">CONNECTION TIMEOUT: You took too long!</span>';
+        
+        const resultElement = document.getElementById("result");
+        resultElement.innerText = "AI WINS BY DEFAULT! 🤖⚡";
+        resultElement.style.color = "#ff0055";
+        resultElement.style.textShadow = "0 0 10px #ff0055";
+        document.getElementById("status-chaining").innerText = "Forward: Timeout -> AI Point";
+
+        updateScoreboard();
+        
+        if (!checkMatchWinner()) {
+            setTimeout(() => {
+                if (timeLeft <= 0 && !isGameOver && !isPaused) { 
+                    startTimer();
+                }
+            }, 2000);
+        }
+    }
+
+    async function playRound(humanMove) {
+        if(isGameOver || isPaused) return;
+
+        document.getElementById("status-chaining").innerText = "Backward: Goal=Win -> Check History";
+
+        try {
+            const response = await fetch('/api/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ humanMove: humanMove, prevOutcome: prevOutcome })
+            });
+            
+            const data = await response.json();
+            const aiMove = data.aiMove;
+
+            document.getElementById("status-bfs").innerText = data.telemetry.bfs;
+            document.getElementById("status-minimax").innerText = "Max: " + capitalize(aiMove) + " | Min: " + capitalize(humanMove);
+
+            let outcome;
+            let resultText;
+            let resultColor;
+
+            if (humanMove === aiMove) {
+                outcome = "tie";
+                resultText = "TIE DETECTED 🤝";
+                resultColor = "#ffb300";
+                scores.ties++;
+            } else if (
+                (humanMove === "rock" && aiMove === "scissors") ||
+                (humanMove === "paper" && aiMove === "rock") ||
+                (humanMove === "scissors" && aiMove === "paper")
+            ) {
+                outcome = "win";
+                resultText = "YOU BREACHED THE AI! 🎉";
+                resultColor = "#00ff66";
+                scores.human++;
+            } else {
+                outcome = "loss";
+                resultText = "AI OUTSMARTED YOU! 🤖⚡";
+                resultColor = "#ff0055";
+                scores.ai++;
+            }
+
+            roundsPlayed++;
+            prevOutcome = outcome;
+
+            document.getElementById("status-chaining").innerText = "Forward: Fact Base -> " + capitalize(outcome);
+            document.getElementById("choices").innerHTML = "You chose: <span style='color:#fff'>" + capitalize(humanMove) + "</span> | AI chose: <span style='color:#fff'>" + capitalize(aiMove) + "</span>";
+            
+            const resultElement = document.getElementById("result");
+            resultElement.innerText = resultText;
+            resultElement.style.color = resultColor;
+            resultElement.style.textShadow = "0 0 10px " + resultColor;
+
+            updateScoreboard();
+            const hasEnded = checkMatchWinner();
+            if (!hasEnded) startTimer();
+
+        } catch (error) {
+            console.error("Communication failure with predictive logic framework:", error);
+        }
+    }
+
+    function updateScoreboard() {
+        document.getElementById("score-human").innerText = scores.human;
+        document.getElementById("score-ai").innerText = scores.ai;
+        document.getElementById("score-ties").innerText = scores.ties;
+        
+        let displayRound = roundsPlayed + 1;
+        if (displayRound > 5) displayRound = 5;
+        document.getElementById("round-tracker").innerText = "ROUND: " + displayRound + " / 5";
+    }
+
+    function updateTelemetryDefaults() {
+        document.getElementById("status-astar").innerText = "f(n) = Cost + Heuristic";
+        document.getElementById("status-minimax").innerText = "Awaiting Alpha-Beta depth...";
+        document.getElementById("status-bfs").innerText = "Best node selection ready";
+        document.getElementById("status-chaining").innerText = "Rule inference parser ready";
+    }
+
+    function checkMatchWinner() {
+        let matchEnded = false;
+        let finalWinner = "";
+
+        if (scores.human === 3) {
+            matchEnded = true;
+            finalWinner = "human";
+        } else if (scores.ai === 3) {
+            matchEnded = true;
+            finalWinner = "ai";
+        } else if (roundsPlayed >= 5) {
+            matchEnded = true;
+            if (scores.human > scores.ai) finalWinner = "human";
+            else if (scores.ai > scores.human) finalWinner = "ai";
+            else finalWinner = "draw";
+        }
+
+        if (matchEnded) {
+            isGameOver = true;
+            clearInterval(timerInterval);
+            
+            const buttons = document.getElementsByClassName("game-btn");
+            for(let btn of buttons) { btn.disabled = true; }
+            document.getElementById("btn-pause").disabled = true;
+
+            document.getElementById("status-astar").innerText = "Target Terminal Reached";
+            document.getElementById("status-minimax").innerText = "Leaf evaluation terminal";
+            document.getElementById("status-bfs").innerText = "Goal state evaluated";
+            document.getElementById("status-chaining").innerText = "Chaining concluded";
+
+            setTimeout(() => {
+                const overlay = document.getElementById("end-screen");
+                const title = document.getElementById("overlay-title");
+                const msg = document.getElementById("overlay-msg");
+                
+                if (finalWinner === "human") {
+                    title.innerText = "🏆 VICTORY 🏆";
+                    title.style.color = "#00ff66";
+                    msg.innerText = "Humanity prevails! Final Score: " + scores.human + "-" + scores.ai;
+                } else if (finalWinner === "ai") {
+                    title.innerText = "❌ DEFEAT ❌";
+                    title.style.color = "#ff0055";
+                    msg.innerText = "The AI network outmatched you. Final Score: " + scores.human + "-" + scores.ai;
+                } else {
+                    title.innerText = "🤝 STALEMATE 🤝";
+                    title.style.color = "#ffb300";
+                    msg.innerText = "An even match over 5 rounds! Score: " + scores.human + "-" + scores.ai;
+                }
+                overlay.style.display = "flex";
+            }, 1500);
+
+            return true;
+        }
+        return false;
+    }
+
+    async function resetMatch() {
+        clearInterval(timerInterval);
+        scores = { human: 0, ai: 0, ties: 0 };
+        roundsPlayed = 0;
+        prevOutcome = null;
+        isGameOver = false;
+        isPaused = false;
+        
+        const pauseBtn = document.getElementById("btn-pause");
+        pauseBtn.innerText = "⏸️ Pause";
+        pauseBtn.classList.remove("paused");
+        pauseBtn.disabled = false;
+
+        document.getElementById("end-screen").style.display = "none";
+        const buttons = document.getElementsByClassName("game-btn");
+        for(let btn of buttons) { btn.disabled = false; }
+        
+        document.getElementById("choices").innerText = "SYSTEM REBOOTED: Awaiting input...";
+        document.getElementById("result").innerText = "";
+        
+        await fetch('/api/reset', { method: 'POST' });
+
+        updateScoreboard();
+        updateTelemetryDefaults();
+        startTimer();
+    }
+
+    function capitalize(word) {
+        return word.charAt(0).toUpperCase() + word.slice(1);
+    }
+</script>
+
+</body>
+</html>
+"""
+
+@app.route('/')
+def home():
+    return render_template_string(HTML_TEMPLATE)
+
+if __name__ == '__main__':
+    print("--------------------------------------------------")
+    print(" Cybermind AI Engine Initialized Successfully!     ")
+    print(" Open your browser and navigate to: http://127.0.0.1:5000/ ")
+    print("--------------------------------------------------")
+    app.run(debug=True, port=5000)
